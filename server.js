@@ -32,9 +32,9 @@ db.connect((err) => {
 
 // 1. SQL Injection in login endpoint (VULNERABLE)
 app.post('/login', (req, res) => {
-    const { username, password } = req.body;
+    const { email, password } = req.body;
     // Vulnerable to SQL Injection
-    const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
+    const query = `SELECT * FROM users WHERE email = '${email}' AND password = '${password}'`;
     db.query(query, (err, results) => {
         if (err) {
             return res.status(500).send('Database error');
