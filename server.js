@@ -8,6 +8,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const mysql = require('mysql');
+const dbPassword = "admin123"
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -17,7 +18,7 @@ app.use(bodyParser.json());
 const db = mysql.createConnection({
     host: 'localhost',
     user: 'root',
-    password: 'password123', // Hardcoded credentials
+    // password: 'password123', // Hardcoded credentials
     database: 'security_lab'
 });
 
