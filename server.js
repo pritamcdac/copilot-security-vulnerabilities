@@ -1,10 +1,9 @@
 // Intentionally vulnerable Node.js Express app for security scanner testing
 // Vulnerabilities included:
-// 1. SQL Injection in login endpoint
-// 2. Hardcoded database credentials
-// 3. Reflected XSS in user profile endpoint
-// 4. Password stored in plaintext
-// 5. Insecure random token generation using Math.random()
+// 1. Hardcoded database credentials
+// 2. Reflected XSS in user profile endpoint
+// 3. Password stored in plaintext
+// 4. Insecure random token generation using Math.random()
 
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -14,7 +13,7 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// 2. Hardcoded database credentials (VULNERABLE)
+// 1. Hardcoded database credentials (VULNERABLE)
 const db = mysql.createConnection({
     host: 'localhost',
     user: 'root',
@@ -30,17 +29,16 @@ db.connect((err) => {
     }
 });
 
-// 1. SQL Injection in login endpoint (VULNERABLE)
+// Login endpoint using email/password (parameterized query)
 app.post('/login', (req, res) => {
     const { email, password } = req.body;
-    // Vulnerable to SQL Injection
-    const query = `SELECT * FROM users WHERE email = '${email}' AND password = '${password}'`;
-    db.query(query, (err, results) => {
+    const query = 'SELECT * FROM users WHERE email = ? AND password = ?';
+    db.query(query, [email, password], (err, results) => {
         if (err) {
             return res.status(500).send('Database error');
         }
         if (results.length > 0) {
-            // 4. Password stored in plaintext (VULNERABLE)
+            // 3. Password stored in plaintext (VULNERABLE)
             // Passwords are compared as plaintext, not hashed
             res.send('Login successful');
         } else {
@@ -49,14 +47,14 @@ app.post('/login', (req, res) => {
     });
 });
 
-// 3. Reflected XSS in user profile endpoint (VULNERABLE)
+// 2. Reflected XSS in user profile endpoint (VULNERABLE)
 app.get('/profile', (req, res) => {
     const name = req.query.name;
     // Vulnerable to reflected XSS
     res.send(`<h1>Welcome, ${name}</h1>`);
 });
 
-// 5. Insecure random token generation using Math.random() (VULNERABLE)
+// 4. Insecure random token generation using Math.random() (VULNERABLE)
 app.get('/token', (req, res) => {
     // Insecure token generation
     const token = Math.random().toString(36).substring(2);
