@@ -1,30 +1,33 @@
-// Intentionally vulnerable Node.js Express app for security scanner testing
-// Vulnerabilities included:
-// 1. Hardcoded database credentials
-// 2. Reflected XSS in user profile endpoint
-// 3. Password stored in plaintext
-// 4. Insecure random token generation using Math.random()
-// 5. SQL injection via string concatenation
-// 6. Command injection using child_process.exec
-// 7. Path traversal file read
+// Hardened Node.js Express app with common security protections applied
 
 const express = require('express');
 const bodyParser = require('body-parser');
 const mysql = require('mysql');
 const fs = require('fs');
-const { exec } = require('child_process');
-const dbPassword = "admin123"
+const path = require('path');
+const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
+const { execFile } = require('child_process');
 
 const app = express();
+
+const requestLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+app.use(requestLimiter);
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// 1. Hardcoded database credentials (VULNERABLE)
 const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: 'password123', // Hardcoded credentials
-    database: 'security_lab'
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'security_lab'
 });
 
 db.connect((err) => {
@@ -35,44 +38,68 @@ db.connect((err) => {
     }
 });
 
-// Login endpoint using email/password (parameterized query)
+const escapeHtml = (unsafe) => {
+    if (typeof unsafe !== 'string') {
+        return '';
+    }
+
+    return unsafe
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+};
+
+// Login endpoint using email/password (parameterized query with hashed passwords)
 app.post('/login', (req, res) => {
     const { email, password } = req.body;
-    const query = 'SELECT * FROM users WHERE email = ? AND password = ?';
-    db.query(query, [email, password], (err, results) => {
+    if (!email || !password) {
+        return res.status(400).send('Email and password are required');
+    }
+
+    const query = 'SELECT id, email, password FROM users WHERE email = ?';
+    db.query(query, [email], async (err, results) => {
         if (err) {
             return res.status(500).send('Database error');
         }
-        if (results.length > 0) {
-            // 3. Password stored in plaintext (VULNERABLE)
-            // Passwords are compared as plaintext, not hashed
-            res.send('Login successful');
-        } else {
-            res.send('Invalid credentials');
+
+        if (results.length === 0) {
+            return res.status(401).send('Invalid credentials');
+        }
+
+        try {
+            const user = results[0];
+            if (!user.password) {
+                return res.status(401).send('Invalid credentials');
+            }
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (isMatch) {
+                return res.send('Login successful');
+            }
+            return res.status(401).send('Invalid credentials');
+        } catch (compareError) {
+            return res.status(500).send('Error validating credentials');
         }
     });
 });
 
-// 2. Reflected XSS in user profile endpoint (VULNERABLE)
 app.get('/profile', (req, res) => {
-    const name = req.query.name;
-    // Vulnerable to reflected XSS
+    const name = escapeHtml(req.query.name || '');
     res.send(`<h1>Welcome, ${name}</h1>`);
 });
 
-// 4. Insecure random token generation using Math.random() (VULNERABLE)
+// Simple demonstration endpoint for returning a one-time random token
+// Note: tokens are not persisted or tied to a specific session/user
 app.get('/token', (req, res) => {
-    // Insecure token generation
-    const token = Math.random().toString(36).substring(2);
+    const token = crypto.randomBytes(32).toString('hex');
     res.send(`Your token: ${token}`);
 });
 
-// 5. SQL injection through string concatenation (VULNERABLE)
 app.get('/user/:id', (req, res) => {
     const userId = req.params.id;
-    // Vulnerable SQL query without parameterization
-    const sql = "SELECT * FROM users WHERE id = " + userId;
-    db.query(sql, (err, results) => {
+    const sql = 'SELECT * FROM users WHERE id = ?';
+    db.query(sql, [userId], (err, results) => {
         if (err) {
             return res.status(500).send('Database error');
         }
@@ -80,10 +107,20 @@ app.get('/user/:id', (req, res) => {
     });
 });
 
-// 6. Command injection using child_process.exec (VULNERABLE)
+const allowedCommands = {
+    uptime: [],
+    whoami: []
+};
+
 app.post('/run', (req, res) => {
     const { command } = req.body;
-    exec(command, (error, stdout, stderr) => {
+    const args = allowedCommands[command];
+
+    if (!args) {
+        return res.status(400).send('Command not allowed');
+    }
+
+    execFile(command, args, { timeout: 5000 }, (error, stdout, stderr) => {
         if (error) {
             return res.status(500).send(`Command failed: ${stderr}`);
         }
@@ -91,11 +128,27 @@ app.post('/run', (req, res) => {
     });
 });
 
-// 7. Path traversal file read (VULNERABLE)
+const SAFE_BASE_PATH = path.resolve(__dirname, 'safe_files');
+if (!fs.existsSync(SAFE_BASE_PATH)) {
+    fs.mkdirSync(SAFE_BASE_PATH, { recursive: true });
+}
+
 app.get('/read-file', (req, res) => {
     const filePath = req.query.path;
-    fs.readFile(filePath, 'utf8', (err, data) => {
+    if (!filePath) {
+        return res.status(400).send('Path is required');
+    }
+
+    const resolvedPath = path.resolve(SAFE_BASE_PATH, filePath);
+    if (!resolvedPath.startsWith(SAFE_BASE_PATH)) {
+        return res.status(400).send('Invalid path');
+    }
+
+    fs.readFile(resolvedPath, 'utf8', (err, data) => {
         if (err) {
+            if (err.code === 'ENOENT') {
+                return res.status(404).send('File not found');
+            }
             return res.status(500).send('Unable to read file');
         }
         res.send(data);
@@ -103,5 +156,5 @@ app.get('/read-file', (req, res) => {
 });
 
 app.listen(3000, () => {
-    console.log('Vulnerable app listening on port 3000');
+    console.log('Secure app listening on port 3000');
 });
