@@ -108,19 +108,19 @@ app.get('/user/:id', (req, res) => {
 });
 
 const allowedCommands = {
-    uptime: [],
-    whoami: []
+    uptime: { cmd: 'uptime', args: [] },
+    whoami: { cmd: 'whoami', args: [] }
 };
 
 app.post('/run', (req, res) => {
     const { command } = req.body;
-    const args = allowedCommands[command];
+    const commandConfig = allowedCommands[command];
 
-    if (!args) {
+    if (!commandConfig) {
         return res.status(400).send('Command not allowed');
     }
 
-    execFile(command, args, { timeout: 5000 }, (error, stdout, stderr) => {
+    execFile(commandConfig.cmd, commandConfig.args, { timeout: 5000 }, (error, stdout, stderr) => {
         if (error) {
             return res.status(500).send(`Command failed: ${stderr}`);
         }
